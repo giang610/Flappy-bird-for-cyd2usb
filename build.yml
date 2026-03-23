@@ -1,0 +1,67 @@
+# ─────────────────────────────────────────────────────────────────
+#  GitHub Actions – tự động build FlappyBird_CYD.bin
+#  Trigger: push lên main  HOẶC  bấm "Run workflow" thủ công
+#  Output : artifact  FlappyBird_CYD_vX.X.bin  (sẵn sàng flash)
+# ─────────────────────────────────────────────────────────────────
+
+name: Build Flappy Bird CYD
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:          # cho phép chạy tay trên GitHub UI
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Cài Python (PlatformIO cần)
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 3. Cache PlatformIO + thư viện (build nhanh hơn lần sau)
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      # 4. Cài PlatformIO CLI
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      # 5. Build
+      - name: Build firmware
+        run: platformio run -e cyd2usb
+
+      # 6. Đổi tên file .bin cho dễ nhận dạng
+      - name: Rename binary
+        run: |
+          mkdir -p dist
+          cp .pio/build/cyd2usb/firmware.bin dist/FlappyBird_CYD.bin
+          echo "Binary size: $(wc -c < dist/FlappyBird_CYD.bin) bytes"
+
+      # 7. Upload artifact (download từ tab Actions trên GitHub)
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlappyBird_CYD_bin
+          path: dist/FlappyBird_CYD.bin
+          retention-days: 30
+
+      # 8. (Tuỳ chọn) Tạo GitHub Release khi push tag  v*.*
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/FlappyBird_CYD.bin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
