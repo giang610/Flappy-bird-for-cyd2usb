@@ -13,32 +13,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1. Cài Arduino CLI (dùng action chính thức - không cần PATH thủ công)
       - name: Install Arduino CLI
         uses: arduino/setup-arduino-cli@v2
 
-      # 2. Cấu hình + cài ESP32 core
       - name: Setup ESP32 core
         run: |
           arduino-cli config init
-          arduino-cli config set board_manager.additional_urls \
-            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli config set board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
           arduino-cli core update-index
           arduino-cli core install esp32:esp32
 
-      # 3. Cài thư viện
       - name: Install libraries
         run: |
           arduino-cli lib install "TFT_eSPI"
           arduino-cli lib install "XPT2046_Touchscreen"
 
-      # 4. Patch User_Setup.h cho CYD 2USB (TFT_DC=27)
-      - name: Patch TFT_eSPI User_Setup.h
+      - name: Patch TFT_eSPI User_Setup.h for CYD 2USB
         run: |
           SETUP=$(find /root/Arduino/libraries /home/runner/Arduino/libraries -name "User_Setup.h" -path "*/TFT_eSPI/*" 2>/dev/null | head -1)
           echo "Patching: $SETUP"
-          cat > "$SETUP" << 'SETUP_EOF'
-#define USER_SETUP_LOADED
+          python3 -c "
+          content = '''#define USER_SETUP_LOADED
 #define ILI9341_DRIVER
 #define TFT_WIDTH  240
 #define TFT_HEIGHT 320
@@ -57,9 +52,15 @@ jobs:
 #define LOAD_FONT2
 #define LOAD_FONT4
 #define SMOOTH_FONT
-SETUP_EOF
+'''
+import os, sys
+path = os.environ.get('SETUP','')
+if not path:
+    sys.exit('SETUP path not found')
+open(path,'w').write(content)
+print('Done')
+" 
 
-      # 5. Build
       - name: Build sketch
         run: |
           mkdir -p dist
@@ -68,13 +69,11 @@ SETUP_EOF
             --output-dir dist \
             FlappyBird_CYD.ino
 
-      # 6. Đổi tên
       - name: Rename binary
         run: |
           mv dist/FlappyBird_CYD.ino.bin dist/FlappyBird_CYD.bin
           echo "Size: $(wc -c < dist/FlappyBird_CYD.bin) bytes"
 
-      # 7. Upload artifact
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -82,7 +81,6 @@ SETUP_EOF
           path: dist/FlappyBird_CYD.bin
           retention-days: 30
 
-      # 8. Release khi push tag v*
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
