@@ -1,7 +1,6 @@
 # ─────────────────────────────────────────────────────────────────
-#  GitHub Actions – tự động build FlappyBird_CYD.bin
-#  Trigger: push lên main  HOẶC  bấm "Run workflow" thủ công
-#  Output : artifact  FlappyBird_CYD_vX.X.bin  (sẵn sàng flash)
+#  GitHub Actions – Build FlappyBird CYD 2USB bằng Arduino CLI
+#  Chỉ cần file này + FlappyBird_CYD.ino, không cần platformio.ini
 # ─────────────────────────────────────────────────────────────────
 
 name: Build Flappy Bird CYD
@@ -9,47 +8,78 @@ name: Build Flappy Bird CYD
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch:          # cho phép chạy tay trên GitHub UI
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout code
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Cài Python (PlatformIO cần)
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      # 1. Cài Arduino CLI
+      - name: Install Arduino CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+          echo "$HOME/bin" >> $GITHUB_PATH
 
-      # 3. Cache PlatformIO + thư viện (build nhanh hơn lần sau)
-      - name: Cache PlatformIO
-        uses: actions/cache@v4
-        with:
-          path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-          restore-keys: pio-${{ runner.os }}-
+      # 2. Cấu hình board ESP32
+      - name: Configure Arduino CLI
+        run: |
+          arduino-cli config init
+          arduino-cli config set board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
 
-      # 4. Cài PlatformIO CLI
-      - name: Install PlatformIO
-        run: pip install platformio
+      # 3. Cài thư viện
+      - name: Install libraries
+        run: |
+          arduino-cli lib install "TFT_eSPI"
+          arduino-cli lib install "XPT2046_Touchscreen"
+
+      # 4. Inject pin config vào User_Setup.h của TFT_eSPI (thay vì dùng file ini)
+      - name: Patch TFT_eSPI User_Setup.h for CYD 2USB
+        run: |
+          SETUP="$HOME/Arduino/libraries/TFT_eSPI/User_Setup.h"
+          cat > "$SETUP" << 'SETUP_EOF'
+          #define USER_SETUP_LOADED
+          #define ILI9341_DRIVER
+          #define TFT_WIDTH  240
+          #define TFT_HEIGHT 320
+          #define TFT_MISO   12
+          #define TFT_MOSI   13
+          #define TFT_SCLK   14
+          #define TFT_CS     15
+          #define TFT_DC     27
+          #define TFT_RST    -1
+          #define TFT_BL     21
+          #define TOUCH_CS   33
+          #define SPI_FREQUENCY       55000000
+          #define SPI_READ_FREQUENCY  20000000
+          #define SPI_TOUCH_FREQUENCY  2500000
+          #define LOAD_GLCD
+          #define LOAD_FONT2
+          #define LOAD_FONT4
+          #define SMOOTH_FONT
+          SETUP_EOF
 
       # 5. Build
-      - name: Build firmware
-        run: platformio run -e cyd2usb
+      - name: Build sketch
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32:FlashMode=dio,FlashFreq=80,PartitionScheme=min_spiffs \
+            --output-dir dist \
+            FlappyBird_CYD.ino
 
-      # 6. Đổi tên file .bin cho dễ nhận dạng
+      # 6. Đổi tên cho gọn
       - name: Rename binary
         run: |
-          mkdir -p dist
-          cp .pio/build/cyd2usb/firmware.bin dist/FlappyBird_CYD.bin
-          echo "Binary size: $(wc -c < dist/FlappyBird_CYD.bin) bytes"
+          mv dist/FlappyBird_CYD.ino.bin dist/FlappyBird_CYD.bin
+          echo "Size: $(wc -c < dist/FlappyBird_CYD.bin) bytes"
 
-      # 7. Upload artifact (download từ tab Actions trên GitHub)
+      # 7. Upload artifact
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -57,7 +87,7 @@ jobs:
           path: dist/FlappyBird_CYD.bin
           retention-days: 30
 
-      # 8. (Tuỳ chọn) Tạo GitHub Release khi push tag  v*.*
+      # 8. Tạo Release khi push tag v*
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
